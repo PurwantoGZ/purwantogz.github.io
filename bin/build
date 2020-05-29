@@ -1,0 +1,196 @@
+#!/usr/bin/env php
+<?php
+
+require __DIR__ . '/../vendor/autoload.php';
+
+$buildDir      = __DIR__ . '/../tmp/build';
+$componentsDir = __DIR__ . '/../tmp/components';
+$deployDir     = __DIR__ . '/../tmp/deploy';
+$configFile    = __DIR__ . '/../config/berti.config.php';
+$staticDir     = __DIR__ . '/../src/static-files';
+
+$container = Berti\container();
+
+call_user_func(include $configFile, $container);
+
+function run($command, $cwd = null)
+{
+    $process = new Symfony\Component\Process\Process($command, $cwd);
+    $process->setTty(true);
+
+    $process->mustRun(function ($type, $buffer) {
+        echo $buffer;
+    });
+}
+
+function checkout($dir, $gitUrl, $tag)
+{
+    if (!is_dir($dir)) {
+        run('git clone ' . $gitUrl . ' "' . $dir . '"');
+    }
+
+    run('git fetch', $dir);
+    run('git checkout -f ' . $tag, $dir);
+}
+
+function component(Symfony\Component\Console\Output\ConsoleOutput $output, $componentsDir, $name, $gitUrl, string $latestVersion)
+{
+    $componentDir = $componentsDir . DIRECTORY_SEPARATOR . $name;
+
+    $output->writeln('Latest version: ' . $latestVersion);
+
+    checkout($componentDir, $gitUrl, $latestVersion);
+}
+
+$input  = new Symfony\Component\Console\Input\ArgvInput();
+$output = new Symfony\Component\Console\Output\ConsoleOutput();
+
+if ($input->hasParameterOption('--use-asset-dev-server')) {
+    putenv('USE_ASSET_DEV_SERVER=true');
+}
+
+if (!$input->hasParameterOption('--no-component-update')) {
+    foreach ($container['data.components'] as $component) {
+        $output->writeln(sprintf(
+            '<comment>Updating component %s...</comment>',
+            $component['repository']
+        ));
+
+        component(
+            $output,
+            $componentsDir,
+            $component['name'],
+            $component['git_url'],
+            $component['releases'][0]['tag']
+        );
+
+        $output->writeln('<info>Done.</info>');
+    }
+}
+
+if ($input->hasParameterOption('--dev-server')) {
+    $address = $input->getParameterOption(
+        '--dev-server-address',
+        '127.0.0.1:8000'
+    );
+
+    putenv('DEPLOY_URL=' . $address);
+
+    call_user_func(
+        $container['server'],
+        getcwd(),
+        $staticDir,
+        $output,
+        $address
+    );
+
+    exit;
+}
+
+(new Symfony\Component\Filesystem\Filesystem())->remove($buildDir);
+(new Symfony\Component\Filesystem\Filesystem())->mkdir($buildDir);
+
+(function (Symfony\Component\Console\Output\OutputInterface $output, string $buildDir, array $components): void {
+    $output->write('Generating changelog.atom...');
+
+    $releases = array_slice(React\Website\Data\releases($components), 0, 10);
+
+    $feed = new Zend\Feed\Writer\Feed();
+
+    $feed->setId(getenv('DEPLOY_URL') . '/changelog.html');
+    $feed->setLink(getenv('DEPLOY_URL') . '/changelog.html');
+    $feed->setFeedLink(getenv('DEPLOY_URL') . '/changelog.atom', 'atom');
+
+    $feed->setLanguage('en');
+    $feed->setTitle('The combined changelog for all ReactPHP components.');
+    $feed->setDateModified((int) $releases[0]['date']->format('U'));
+
+    foreach ($releases as $release) {
+        $entry = $feed->createEntry();
+
+        $entry->setTitle($release['component'] . ' ' . $release['version']);
+        $entry->setLink($release['url']);
+        $entry->setDateModified((int) $release['date']->format('U'));
+        $entry->setDescription($release['html']);
+        $entry->addAuthor($release['author']);
+
+        $feed->addEntry($entry);
+    }
+
+    file_put_contents(
+        $buildDir . '/changelog.atom',
+        $feed->export('atom')
+    );
+
+    $output->writeln('<info>Done</info>');
+})($output, $buildDir, $container['data.components']);
+
+call_user_func(
+    $container['generator'],
+    getcwd(),
+    $buildDir,
+    $output
+);
+
+if ($input->hasParameterOption('--deploy')) {
+    (function (Symfony\Component\Console\Output\OutputInterface $output, $buildDir, $deployDir) {
+        $deployRepository = getenv('DEPLOY_REPO');
+
+        if (!$deployRepository) {
+            $output->writeln('<error>No deploy repository configured via the DEPLOY_REPO env variable, skipping deployment.</error>');
+            return;
+        }
+
+        $deployRepositoryUrl = sprintf(
+            'git@github.com:%s',
+            $deployRepository
+        );
+
+        $output->writeln('<info>Starting deployment to ' . $deployRepositoryUrl . '.</info>');
+
+        $filesystem = new Symfony\Component\Filesystem\Filesystem();
+
+        $filesystem->remove($deployDir);
+        $filesystem->mkdir($deployDir);
+
+        run('git clone ' . $deployRepositoryUrl . ' "' . $deployDir . '"');
+
+        $deployBranch = getenv('DEPLOY_TARGET_BRANCH');
+
+        if (!$deployBranch) {
+            $deployBranch = 'gh-pages';
+            $output->writeln('<comment>No deploy branch configured via the DEPLOY_TARGET_BRANCH env variable, using default "gh-pages" branch.</comment>');
+        }
+
+        try {
+            run('git checkout ' . $deployBranch, $deployDir);
+        } catch (Symfony\Component\Process\Exception\ProcessFailedException $e) {
+            run('git checkout --orphan ' . $deployBranch, $deployDir);
+        }
+
+        $output->write('<comment>Copying generated website...</comment>');
+
+        $finder = new Symfony\Component\Finder\Finder();
+        $finder
+            ->files()
+            ->in($deployDir)
+            ->ignoreDotFiles(false)
+            ->ignoreVCS(true);
+
+        $filesystem->remove($finder);
+        $filesystem->mirror($buildDir, $deployDir);
+
+        $output->writeln('<info>Done.</info>');
+
+        try {
+            run('git add --all . && git commit -m "Update website build"', $deployDir);
+        } catch (Symfony\Component\Process\Exception\ProcessFailedException $e) {
+            $output->writeln('<error>No changes in this build, skipping deployment.</error>');
+            return;
+        }
+
+        run('git push origin ' . $deployBranch, $deployDir);
+
+        $output->writeln('<info>Deployment finished.</info>');
+    })($output, $buildDir, $deployDir);
+}

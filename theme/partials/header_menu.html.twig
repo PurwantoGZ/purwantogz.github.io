@@ -1,0 +1,42 @@
+<div class="header__menu">
+    <button class="hamburger" data-ctrly="off-canvas-menu" data-off-canvas-menu-control>
+        <div class="hamburger__box">
+            <div class="hamburger__inner">
+                <span class="visually-hidden">Menu</span>
+            </div>
+        </div>
+    </button>
+</div>
+<nav id="off-canvas-menu" class="off-canvas-menu" aria-hidden="true" tabindex="0">
+    <div class="off-canvas-menu__content">
+        <button aria-label="Close menu" class="off-canvas-menu__close" data-ctrly="off-canvas-menu" data-off-canvas-menu-control>
+            <i class="icon-x" aria-hidden="true"></i>
+        </button>
+
+        <section class="off-canvas-menu__section">
+            <a class="off-canvas-menu__section-top" href="{{ berti.relative_root ? berti.relative_root : './' }}">Home</a>
+        </section>
+
+        <section class="off-canvas-menu__section">
+            <a class="off-canvas-menu__section-top" href="{{ berti.relative_root }}changelog.html">Changelog</a>
+        </section>
+    {% for category, components in components_by_category %}
+        <section class="off-canvas-menu__section">
+            <h3 class="off-canvas-menu__section-header">{{ category }}</h3>
+            <ul class="off-canvas-menu__list">
+            {% for component in components %}
+                <li>
+                    <a class="off-canvas-menu__link" href="{{ berti.relative_root }}{{ component.name }}/">
+                        {{ component.title|emoji }}
+
+                        <span class="off-canvas-menu__version">
+                            {{ component.releases[0].tag }}
+                        </span>
+                    </a>
+                </li>
+            {% endfor %}
+            </ul>
+        </section>
+    {% endfor %}
+    </div>
+</nav>

@@ -1,0 +1,26 @@
+{% extends 'default.html.twig' %}
+
+{% block head %}
+<link href="{{ base_url }}/changelog.atom" type="application/atom+xml" rel="alternate" title="Changelog">
+{% endblock %}
+
+{% block content %}
+
+    <div class="container">
+        <div class="wrapper wrapper--small">
+            {{ berti.content|raw }}
+
+            {% include 'partials/changelog.html.twig' with {releases_by_year: releases_by_year, is_combined_changelog: true} %}
+
+            <ul class="links">
+                <li>
+                    <a href="{{ base_url }}/changelog.atom">
+                        <i class="icon-feed" aria-hidden="true"></i>
+                        Subscribe to the Changelog feed
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+{% endblock %}
