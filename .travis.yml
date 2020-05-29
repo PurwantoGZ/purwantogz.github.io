@@ -29,6 +29,6 @@ deploy:
   fqdn: $DEPLOY_FQDN
   repo: $DEPLOY_REPO
   target_branch: $DEPLOY_TARGET_BRANCH
-  github_token: $GITHUB_TOKEN
+  github_token: $DEPLOY_GITHUB_TOKEN
   on:
     branch: master
